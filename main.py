@@ -10,7 +10,7 @@ def search(
     engine: str = Query("duckduckgo", description="Search engine")
 ):
     """
-    Run a search on the chosen engine and return results.
+    Perform a search on the specified search engine and return results.
     Example: /search?q=ai+tools&engine=brave&limit=5
     """
     results = get_serp_results(q, engine=engine, max_results=limit)
