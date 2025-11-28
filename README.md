@@ -1,14 +1,19 @@
 ## Running locally
 ```
 source venv/bin/activate
+
 pip install -r requirements.txt
+
 uvicorn main:app --reload
 ```
 ## Running in Docker
 
 May take some time to build:
-`docker build -t serp-api .`
-` docker run -p 8000:8000 serp-api`
+```
+docker build -t serp-api .
+
+docker run -p 8000:8000 serp-api
+```
 
 ## Example queries
 
