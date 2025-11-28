@@ -14,6 +14,8 @@ from selenium_stealth import stealth
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+import requests
+
 # CONFIG 
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 1.0  # seconds
@@ -234,6 +236,58 @@ def human_scroll(driver):
         rand_sleep(0.2, 0.9)
 
 
+# from playwright.sync_api import sync_playwright
+
+# def fetch_brave_html(query: str) -> str:
+#     url = f"https://search.brave.com/search?q={query}"
+
+#     with sync_playwright() as pw:
+#         browser = pw.chromium.launch(headless=False)
+#         context = browser.new_context(user_agent=random.choice(FINGERPRINT_PROFILES)["ua"], viewport={"width": 1280, "height": 900})
+#         page = context.new_page()
+#         page.goto(url, wait_until="domcontentloaded")
+
+#         # Simple human-like scroll
+#         for _ in range(3):
+#             page.mouse.wheel(0, random.randint(300,700))
+        
+#         html = page.content()
+#         browser.close()
+#         return html
+
+
+
+# from ollama import chat  # import the function, not a class
+
+# def extract_results_with_tinylama(html: str) -> list:
+#     prompt = f"""
+#     You are a search engine result extractor.
+#     Extract only REAL organic results from the HTML input.
+
+#     Input HTML:
+#     {html}
+
+#     Return ONLY valid JSON in this format:
+#     [
+#       {{ "title": "...", "url": "...", "snippet": "..." }},
+#       ...
+#     ]
+#     """
+    
+#     response = chat(
+#         model="tinyllama",
+#         messages=[{"role":"user","content":prompt}]
+#     )
+    
+#     # Parse TinyLlama response into Python list
+#     import json
+#     try:
+#         results = json.loads(response["message"]["content"])
+#     except Exception:
+#         results = []
+#     print(results)
+#     return results
+
 # Different search engines
 def get_brave_results(driver, query: str, max_results: int = 5) -> List[Dict]:
     url = f"https://search.brave.com/search?q={query}"
@@ -266,6 +320,8 @@ def get_brave_results(driver, query: str, max_results: int = 5) -> List[Dict]:
             "favicon": icon.get_attribute("src") if icon else None
         })
 
+    # html = fetch_brave_html(query)
+    # results = extract_results_with_tinylama(html)
     return results
 
 
@@ -311,13 +367,209 @@ def get_duckduckgo_results(driver, query: str, max_results: int = 5) -> List[Dic
     return results
 
 
-# Wrapper over engines 
+def get_google_results(driver, query: str, max_results: int = 5):
+    """Robust Google search scraper"""
+    url = f"https://www.google.com/search?q={query}"
+    driver.get(url)
+    
+    # Handle consent popups
+    try:
+        consent = driver.find_element(By.XPATH, "//button[contains(text(),'I agree') or contains(text(),'Accept all')]")
+        consent.click()
+        time.sleep(1)
+    except:
+        pass
+    
+    # Wait for search results to load
+    WebDriverWait(driver, 15).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, "div.g, div.tF2Cxc, div.Ww4FFb"))
+    )
+    
+    results = []
+    blocks = driver.find_elements(By.CSS_SELECTOR, "div.g, div.tF2Cxc, div.Ww4FFb")
+    
+    seen_urls = set()
+    
+    for block in blocks:
+        if len(results) >= max_results:
+            break
+        try:
+            # Title
+            try:
+                title = block.find_element(By.TAG_NAME, "h3").text
+            except:
+                title = ""
+            
+            # URL
+            try:
+                url = block.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
+            except:
+                url = ""
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            
+            # Snippet
+            snippet = ""
+            for sel in ["div.VwiC3b", "div.IsZvec", "div.s3v9rd"]:
+                try:
+                    snippet = block.find_element(By.CSS_SELECTOR, sel).text
+                    if snippet:
+                        break
+                except:
+                    continue
+            
+            results.append({
+                "title": title,
+                "url": url,
+                "snippet": snippet
+            })
+        except:
+            continue
+    
+    # Pad if needed
+    while len(results) < max_results:
+        results.append({"title": "", "url": None, "snippet": ""})
+    
+    return results
+def get_bing_results(driver, query: str, max_results: int = 5) -> List[Dict]:
+    url = f"https://www.bing.com/search?q={query}"
+    driver.get(url)
+
+    rand_sleep(1.5, 3.0)
+    human_scroll(driver)
+
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "li.b_algo"))
+        )
+    except Exception:
+        logger.debug("Bing: wait timeout; proceeding with best-effort extraction")
+
+    results = []
+    blocks = driver.find_elements(By.CSS_SELECTOR, "li.b_algo")
+    for block in blocks[:max_results]:
+        try:
+            title_el = block.find_element(By.TAG_NAME, "h2")
+            link_el = title_el.find_element(By.TAG_NAME, "a")
+            snippet_el = block.find_element(By.CSS_SELECTOR, "p")
+        except Exception:
+            continue
+        results.append({
+            "title": title_el.text.strip() if title_el else "",
+            "url": link_el.get_attribute("href") if link_el else None,
+            "snippet": snippet_el.text.strip() if snippet_el else ""
+        })
+    return results
+
+
+def get_baidu_results(driver, query: str, max_results: int = 5) -> List[Dict]:
+    url = f"https://www.baidu.com/s?wd={query}"
+    driver.get(url)
+
+    rand_sleep(1.5, 3.0)
+    # scroll a few times to load more results
+    for _ in range(2):
+        human_scroll(driver)
+
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.result, .c-container, .result-op"))
+        )
+    except Exception:
+        logger.debug("Baidu: wait timeout; proceeding with best-effort extraction")
+
+    results = []
+    blocks = driver.find_elements(By.CSS_SELECTOR, "div.result.c-container, div.c-container, .result-op")
+
+    for block in blocks:
+        if len(results) >= max_results:
+            break
+
+        try:
+            # === Title & URL ===
+            title = ""
+            url = None
+            link_el = None
+            title_selectors = ["h3 a", ".t a", ".c-title a", "a[target='_blank']", "a"]
+
+            for selector in title_selectors:
+                try:
+                    link_el = block.find_element(By.CSS_SELECTOR, selector)
+                    if link_el.text.strip() and link_el.get_attribute('href'):
+                        title = link_el.text.strip()
+                        url = link_el.get_attribute('href')
+                        break
+                except:
+                    continue
+
+            if not title or not url:
+                # fallback: try any <a> inside block
+                try:
+                    link_el = block.find_element(By.TAG_NAME, "a")
+                    title = link_el.text.strip()
+                    url = link_el.get_attribute("href")
+                except:
+                    continue  # skip if no link
+
+            # === Snippet ===
+            snippet = ""
+            snippet_selectors = [
+                "div[data-module='abstract']", ".summary-text_560AM",
+                "div[role='text']", ".cu-line-clamp-2",
+                ".c-color-text", ".c-abstract",
+                ".c-span18", ".op-bk-polysemy"
+            ]
+            for selector in snippet_selectors:
+                try:
+                    snippet_el = block.find_element(By.CSS_SELECTOR, selector)
+                    snippet_text = snippet_el.text.strip()
+                    if snippet_text:
+                        import re
+                        snippet_text = re.sub(r'\d{4}年\d{1,2}月\d{1,2}日', '', snippet_text)
+                        snippet_text = re.sub(r'\s+', ' ', snippet_text).strip()
+                        if snippet_text:
+                            snippet = snippet_text
+                            break
+                except:
+                    continue
+
+            # fallback: use remaining block text
+            if not snippet:
+                full_text = block.text.strip()
+                # remove title from block text
+                if title in full_text:
+                    full_text = full_text.replace(title, "")
+                # pick first 1-2 lines as snippet
+                lines = [line.strip() for line in full_text.split('\n') if line.strip()]
+                if lines:
+                    snippet = " ".join(lines[:2])
+
+            results.append({
+                "title": title,
+                "url": url,
+                "snippet": snippet
+            })
+
+        except Exception as e:
+            logger.debug(f"Baidu: failed to extract block: {e}")
+            continue
+
+    # if still less than max_results, pad with empty dicts
+    while len(results) < max_results:
+        results.append({"title": "", "url": None, "snippet": ""})
+
+    return results
+
+
+
+# Extend the main wrapper
 def get_serp_results(query: str, engine: str = "duckduckgo", max_results: int = 5) -> List[Dict]:
     engine = engine.lower().strip()
     attempt = 0
     backoff = INITIAL_BACKOFF
-
     last_err = None
+
     while attempt < MAX_RETRIES:
         attempt += 1
         try:
@@ -328,22 +580,17 @@ def get_serp_results(query: str, engine: str = "duckduckgo", max_results: int = 
                 results = get_duckduckgo_results(driver, query, max_results)
             elif engine == "brave":
                 results = get_brave_results(driver, query, max_results)
+            elif engine == "google":
+                results = get_google_results(driver, query, max_results)
+            elif engine == "bing":
+                results = get_bing_results(driver, query, max_results)
+            elif engine == "baidu":
+                results = get_baidu_results(driver, query, max_results)
             else:
-                raise ValueError("Unsupported engine. Supported: brave, duckduckgo")
-
-            # brief sanity: ensure results contain url or title
-            cleaned = []
-            for r in results:
-                cleaned.append({
-                    "title": r.get("title") or "",
-                    "url": r.get("url") or None,
-                    "snippet": r.get("snippet") or "",
-                    "display_url": r.get("display_url") or None,
-                    "favicon": r.get("favicon") or None
-                })
+                raise ValueError("Unsupported engine. Supported: duckduckgo, brave, google, bing, baidu")
 
             driver.quit()
-            return cleaned
+            return results
 
         except Exception as e:
             last_err = e
@@ -352,7 +599,6 @@ def get_serp_results(query: str, engine: str = "duckduckgo", max_results: int = 
                 driver.quit()
             except Exception:
                 pass
-            # exponential backoff with jitter
             rand_sleep(backoff * 0.8, backoff * 1.5)
             backoff *= 2.0
 
