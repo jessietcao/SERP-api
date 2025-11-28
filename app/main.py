@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query
-from scraper import get_serp_results
+from app.scraper import get_serp_results
 
 app = FastAPI(title="Custom SERP API", version="0.2")
 
