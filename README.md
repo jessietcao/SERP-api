@@ -1,9 +1,9 @@
 ## Running locally
-
-`source venv/bin/activate`
-`pip install -r requirements.txt`
-`uvicorn main:app --reload`
-
+```
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
 ## Running in Docker
 
 May take some time to build:
