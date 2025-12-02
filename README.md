@@ -15,7 +15,7 @@ docker build -t serp-api .
 docker run -p 8000:8000 serp-api
 ```
 
-## Example queries
+## Example endpoints
 
 ### DuckDuckGo
 `http://127.0.0.1:8000/search?q=ai+tools&engine=duckduckgo&limit=5`
